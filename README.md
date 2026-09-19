@@ -2,7 +2,9 @@
 
 [![](https://poggit.pmmp.io/shield.state/Customies)](https://poggit.pmmp.io/p/Customies) [![](https://poggit.pmmp.io/shield.dl.total/Customies)](https://poggit.pmmp.io/p/Customies)
 
-A PocketMine-MP plugin that implements support for custom blocks, items and entities.
+An Altay plugin that implements support for custom blocks, items and entities.
+
+This is the Altay fork of [CustomiesDevs/Customies](https://github.com/CustomiesDevs/Customies).
 
 ## Community
 
