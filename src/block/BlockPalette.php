@@ -5,7 +5,9 @@ namespace customiesdevs\customies\block;
 
 use pocketmine\data\bedrock\block\BlockStateData;
 use pocketmine\data\bedrock\block\BlockTypeNames;
+use pocketmine\nbt\LittleEndianNbtSerializer;
 use pocketmine\nbt\tag\CompoundTag;
+use pocketmine\nbt\TreeRoot;
 use pocketmine\network\mcpe\convert\BlockStateDictionaryEntry;
 use pocketmine\network\mcpe\convert\BlockTranslator;
 use pocketmine\network\mcpe\convert\TypeConverter;
@@ -13,11 +15,10 @@ use pocketmine\utils\AssumptionFailedError;
 use pocketmine\utils\SingletonTrait;
 use ReflectionProperty;
 use RuntimeException;
-use function array_keys;
 use function count;
 use function hash;
-use function strcmp;
-use function usort;
+use function hexdec;
+use function reset;
 
 final class BlockPalette {
 	use SingletonTrait;
@@ -59,7 +60,7 @@ final class BlockPalette {
 	}
 
 	/**
-	 * Inserts the provided state in to the correct position of the palette.
+	 * Inserts the provided state in to the palette under the state ID the client derives for it.
 	 */
 	public function insertState(CompoundTag $state, int $meta = 0): void {
 		if(($name = $state->getString(BlockStateData::TAG_NAME, "")) === "") {
@@ -68,44 +69,49 @@ final class BlockPalette {
 		if(($properties = $state->getCompoundTag(BlockStateData::TAG_STATES)) === null) {
 			throw new RuntimeException("Block state must contain a CompoundTag called 'states'");
 		}
-		$this->sortWith($entry = new BlockStateDictionaryEntry($name, $properties->getValue(), $meta));
+		$entry = new BlockStateDictionaryEntry($name, $properties->getValue(), $meta);
+		$stateId = self::computeStateId($entry);
+		if(isset($this->states[$stateId])) {
+			throw new RuntimeException("Block state $name is already registered");
+		}
+		$this->states[$stateId] = $entry;
 		$this->customStates[] = $entry;
+		$this->apply();
 	}
 
 	/**
-	 * Sorts the palette's block states in the correct order, also adding the provided state to the array.
+	 * Block runtime IDs are a fnv1a32 hash of the little endian NBT of the state, which is how the client derives them
+	 * as well. The order of the palette does not matter because of that, only the ID each state ends up under.
 	 */
-	private function sortWith(BlockStateDictionaryEntry $newState): void {
-		// To sort the block palette we first have to split the palette up in to groups of states. We only want to sort
-		// using the name of the block, and keeping the order of the existing states.
-		$states = [];
-		foreach($this->getStates() as $state){
-			$states[$state->getStateName()][] = $state;
+	private static function computeStateId(BlockStateDictionaryEntry $entry): int {
+		$states = CompoundTag::create();
+		foreach(BlockStateDictionaryEntry::decodeStateProperties($entry->getRawStateProperties()) as $name => $value) {
+			$states->setTag($name, $value);
 		}
-		// Append the new state we are sorting with at the end to preserve existing order.
-		$states[$newState->getStateName()][] = $newState;
+		$nbt = (new LittleEndianNbtSerializer())->write(new TreeRoot(CompoundTag::create()
+			->setString(BlockStateData::TAG_NAME, $entry->getStateName())
+			->setTag(BlockStateData::TAG_STATES, $states)));
+		$hash = (int) hexdec(hash("fnv1a32", $nbt));
+		return $hash >= 0x80000000 ? $hash - 0x100000000 : $hash;
+	}
 
-		$names = array_keys($states);
-		// As of 1.18.30, blocks are sorted using a fnv164 hash of their names.
-		usort($names, static fn(string $a, string $b) => strcmp(hash("fnv164", $a), hash("fnv164", $b)));
-		$sortedStates = [];
-		$stateId = 0;
-		$stateDataToStateIdLookup = [];
-		foreach($names as $name){
-			// With the sorted list of names, we can now go back and add all the states for each block in the correct order.
-			foreach($states[$name] as $state){
-				$sortedStates[$stateId] = $state;
-				if(count($states[$name]) === 1) {
-					$stateDataToStateIdLookup[$name] = $stateId;
-				}else{
-					$stateDataToStateIdLookup[$name][$state->getRawStateProperties()] = $stateId;
-				}
-				$stateId++;
-			}
+	/**
+	 * Writes the palette back in to the dictionary, rebuilding the lookups that depend on it.
+	 */
+	private function apply(): void {
+		$table = [];
+		foreach($this->states as $stateId => $state) {
+			$table[$state->getStateName()][$state->getRawStateProperties()] = $stateId;
 		}
-		$this->states = $sortedStates;
+
+		$stateDataToStateIdLookup = [];
+		foreach($table as $name => $stateIds) {
+			// Stateless blocks skip the inner array, the dictionary relies on that fast path.
+			$stateDataToStateIdLookup[$name] = count($stateIds) === 1 ? reset($stateIds) : $stateIds;
+		}
+
 		$dictionary = $this->translator->getBlockStateDictionary();
-		$this->bedrockKnownStates->setValue($dictionary, $sortedStates);
+		$this->bedrockKnownStates->setValue($dictionary, $this->states);
 		$this->stateDataToStateIdLookup->setValue($dictionary, $stateDataToStateIdLookup);
 		$this->idMetaToStateIdLookupCache->setValue($dictionary, null); //set this to null so pm can create a new cache
 		$this->fallbackStateId->setValue($this->translator, $stateDataToStateIdLookup[BlockTypeNames::INFO_UPDATE] ??
