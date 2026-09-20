@@ -3,7 +3,7 @@ description: An Altay plugin that implements support for custom blocks, items an
 
 main: customiesdevs\customies\Customies
 src-namespace-prefix: customiesdevs\customies
-version: 1.5.0
+version: 1.5.1
 api: 5.44.0
 
 authors:

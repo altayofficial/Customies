@@ -166,15 +166,17 @@ final class CustomiesBlockFactory {
 		GlobalBlockStateHandlers::getSerializer()->map($block, $serializer);
 		GlobalBlockStateHandlers::getDeserializer()->map($identifier, $deserializer);
 
-		$creativeInfo ??= CreativeInventoryInfo::DEFAULT();
+		// The client always wants a category in the block properties, even for blocks we never put in the creative
+		// inventory. Keep $creativeInfo itself untouched, it decides whether we register the block below.
+		$creativeData = $creativeInfo ?? CreativeInventoryInfo::DEFAULT();
 		$propertiesTag
 			->setTag("components",
 				$components->setTag("minecraft:creative_category", CompoundTag::create()
-					->setString("category", $creativeInfo->getCategory())
-					->setString("group", $creativeInfo->getGroup())))
+					->setString("category", $creativeData->getCategory())
+					->setString("group", $creativeData->getGroup())))
 			->setTag("menu_category", CompoundTag::create()
-				->setString("category", $creativeInfo->getCategory() ?? "")
-				->setString("group", $creativeInfo->getGroup() ?? ""))
+				->setString("category", $creativeData->getCategory())
+				->setString("group", $creativeData->getGroup()))
 			->setInt("molangVersion", 1);
 
 		if($creativeInfo !== null){
